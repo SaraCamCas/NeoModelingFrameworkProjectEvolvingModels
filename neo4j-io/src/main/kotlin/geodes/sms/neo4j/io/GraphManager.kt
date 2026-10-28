@@ -56,8 +56,10 @@ internal class GraphManager(dbUri: String, username: String, password: String) :
     }
 
     override fun remove(node: INodeEntity) {
-        if (node is INodeController) node.remove()
-        else throw Exception("object $node must be instance of INodeController")
+        if (node is INodeController) {
+            println("REMOVE queued: ${node.label}")
+            node.remove()
+        } else throw Exception("object $node must be instance of INodeController")
     }
 
     override fun close() {

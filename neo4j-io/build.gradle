@@ -15,4 +15,6 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    minHeapSize = "512m"
+    maxHeapSize = project.findProperty("testHeap") ?: "2g"
 }

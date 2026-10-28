@@ -19,7 +19,8 @@ class InitTest {
         n1.putProperty("property", "Test property")
         graphManager.saveChanges()  // commit new changes
 
-        n4.remove()  // remove the node 'n4' within its children (cascade delete)
+        graphManager.remove(n4)   // goes through GraphManager, so the print fires
+
         graphManager.saveChanges()
         graphManager.close()
         graphManager.clearCache()
