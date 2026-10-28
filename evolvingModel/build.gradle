@@ -1,0 +1,10 @@
+plugins {
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+dependencies {
+    //implementation fileTree(include: ['*.jar'], dir: 'libs')
+    //implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8'
+    implementation 'org.eclipse.emf:org.eclipse.emf.ecore.xmi:2.16.0'
+    implementation 'org.eclipse.emf:org.eclipse.emf.ecore:2.23.0'
+}

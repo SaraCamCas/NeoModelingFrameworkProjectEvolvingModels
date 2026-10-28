@@ -1,1 +1,3 @@
 include ':modelLoader', ':codeGenerator', ':modelEditor', ':emfExtension', ':neo4j-io', ':config'
+
+include 'evolvingModel'
