@@ -6,6 +6,8 @@ import org.neo4j.driver.internal.value.IntegerValue
 import org.neo4j.driver.internal.value.ListValue
 import org.neo4j.driver.internal.value.MapValue
 import org.neo4j.driver.internal.value.StringValue
+import geodes.sms.neo4j.io.type.ChangeType
+import geodes.sms.neo4j.io.type.logChange
 import java.util.*
 
 class BufferedRemover(val nodesBatchSize: Int = ManagerBatchSizes.removerNodesBatchSize, val refsBatchSize: Int = 10000) {
@@ -16,14 +18,17 @@ class BufferedRemover(val nodesBatchSize: Int = ManagerBatchSizes.removerNodesBa
     private val refsToRemoveByHostNodes = hashSetOf<ReferenceMatchParameter>()
 
     fun removeNode(id: Long) {
+        logChange(ChangeType.REMOVE, "node id=$id") // removes one node directly by ID
         nodesToRemoveByID.add(id)
     }
 
     fun removeChild(startID: Long, rType: String, endID: Long) {
+        logChange(ChangeType.REMOVE, "child $endID of $startID via $rType") // removes the child node, found through parent (startID) and the relationship type
         nodesToRemoveByHost.add(PathMatchParameter(startID, rType, endID))
     }
 
     fun removeRelationship(startID: Long, rType: String, endID: Long) {
+        logChange(ChangeType.REMOVE, "relationship $rType from $startID to $endID") // removes only the edge between two nodes
         refsToRemoveByHostNodes.add(ReferenceMatchParameter(startID, rType, endID))
     }
 

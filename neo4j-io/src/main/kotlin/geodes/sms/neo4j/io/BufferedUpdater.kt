@@ -6,6 +6,8 @@ import org.neo4j.driver.Value
 import org.neo4j.driver.internal.value.IntegerValue
 import org.neo4j.driver.internal.value.ListValue
 import org.neo4j.driver.internal.value.MapValue
+import geodes.sms.neo4j.io.type.ChangeType
+import geodes.sms.neo4j.io.type.logChange
 
 /** Update properties of db entities (nodes and refs) */
 class BufferedUpdater(val updateBatchSize: Int = ManagerBatchSizes.updaterNodesBatchSize) {
@@ -13,10 +15,12 @@ class BufferedUpdater(val updateBatchSize: Int = ManagerBatchSizes.updaterNodesB
     private val refsToUpdate = hashMapOf<Long, Map<String, Value>>()
 
     fun updateNode(id: Long, props: Map<String, Value>) {
+        logChange(ChangeType.UPDATE, "node id=$id props=${props.keys}")
         nodesToUpdate[id] = props
     }
 
     fun updateRelationship(id: Long, props: Map<String, Value>) {
+        logChange(ChangeType.UPDATE, "relationship id=$id props=${props.keys}")
         refsToUpdate[id] = props
     }
 

@@ -41,6 +41,6 @@ task fatJar(type: Jar) {
 }
 test {
     useJUnitPlatform()
-    jvmArgs '-Xmx12g', '-Xms8g'
+    jvmArgs '-Xmx2g', '-Xms512m'
 
 }

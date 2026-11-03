@@ -9,6 +9,8 @@ import org.neo4j.driver.internal.value.IntegerValue
 import org.neo4j.driver.internal.value.ListValue
 import org.neo4j.driver.internal.value.MapValue
 import org.neo4j.driver.internal.value.StringValue
+import geodes.sms.neo4j.io.type.ChangeType
+import geodes.sms.neo4j.io.type.logChange
 
 class BufferedCreator(val nodesBatchSize: Int = ManagerBatchSizes.creatorNodesBatchSize, val refsBatchSize: Int = 10000) {
     private val nodesToCreate = hashMapOf<Long, NodeParameter>()
@@ -17,6 +19,7 @@ class BufferedCreator(val nodesBatchSize: Int = ManagerBatchSizes.creatorNodesBa
     private var r: Long = 0
 
     fun createNode(label: String, props: Map<String, Value> = emptyMap()): Long {
+        logChange(ChangeType.CREATE, label)
         val innerID = n--
         nodesToCreate[innerID] = NodeParameter(innerID, label, props)
         return innerID
@@ -26,6 +29,7 @@ class BufferedCreator(val nodesBatchSize: Int = ManagerBatchSizes.creatorNodesBa
         rType: String, start: INodeEntity, end: INodeEntity,
         props: Map<String, Value> = emptyMap()
     ): Long {
+        logChange(ChangeType.CREATE, "relationship $rType")
         val alias = r--
         refsToCreate[alias] = ReferenceParameter(alias, rType, start, end, props)
         return alias

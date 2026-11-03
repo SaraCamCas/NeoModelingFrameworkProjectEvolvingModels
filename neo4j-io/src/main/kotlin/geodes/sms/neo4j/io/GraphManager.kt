@@ -3,6 +3,8 @@ package geodes.sms.neo4j.io
 import geodes.sms.neo4j.io.controllers.IGraphManager
 import geodes.sms.neo4j.io.controllers.INodeController
 import geodes.sms.neo4j.io.entity.INodeEntity
+import geodes.sms.neo4j.io.type.ChangeType
+import geodes.sms.neo4j.io.type.logChange
 import org.neo4j.driver.*
 
 /** Graph proxy */
@@ -32,6 +34,7 @@ internal class GraphManager(dbUri: String, username: String, password: String) :
     }
 
     override fun createNode(label: String): INodeController {
+        // logChange(ChangeType.CREATE, label)
         return mapper.createNode(label)
     }
 
