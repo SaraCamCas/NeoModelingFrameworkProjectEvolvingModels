@@ -13,16 +13,15 @@ data class NodeRef(val id: Long, val label: String? = null, val persisted: Boole
 
 // log with all possible informations, optional when = null or emptyMap()
 data class ChangeEvent(
-    val seq: Int,
-    val batch: Int,
+    val seq: Int, // numéro d'ordre de l'événément dans le log
+    val batch: Int, // numéro du commit qui produit l'événement
     val time: String,
     val type: ChangeType,
     val target: Target,
-    val node: NodeRef? = null,
-    val other: NodeRef? = null,
-    val refType: String? = null,
-    val props: Map<String, Any?> = emptyMap(),
-    val detail: String? = null
+    val node: NodeRef? = null, // noeud concerné ou origine de la relation
+    val other: NodeRef? = null, // second noeud pour une relation
+    val refType: String? = null, // type de la relation, vide si aucune
+    val props: Map<String, Any?> = emptyMap(), // propriétés écrites ou modifiées (nom -> valeur), vide si aucune
 ) {
     fun format(): String {
         val fields = listOfNotNull(
@@ -30,7 +29,6 @@ data class ChangeEvent(
             other?.let { "other=$it" },
             refType?.let { "ref=$it" },
             props.takeIf { it.isNotEmpty() }?.let { "props=$it" },
-            detail?.let { "detail=$it" }
         ).joinToString(" ")
         return "$seq | b$batch | $time | $type | $target | $fields".trimEnd()
     }
@@ -61,12 +59,11 @@ object ChangeLog {
         other: NodeRef? = null,
         refType: String? = null,
         props: Map<String, Any?> = emptyMap(),
-        detail: String? = null
     ) {
         if (!enabled) return
         seq++
         val time = LocalTime.now().toString().take(12)
-        val event = ChangeEvent(seq, batch, time, type, target, node, other, refType, props.toMap(), detail)
+        val event = ChangeEvent(seq, batch, time, type, target, node, other, refType, props.toMap())
         events.add(event)
         file.parentFile?.mkdirs()
         file.appendText(event.format() + "\n")
