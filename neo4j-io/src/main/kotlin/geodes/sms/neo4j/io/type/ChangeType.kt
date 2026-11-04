@@ -3,7 +3,7 @@ package geodes.sms.neo4j.io.type
 import java.io.File
 import java.time.LocalTime
 
-enum class ChangeType { CREATE, UPDATE, REMOVE, CANCEL, COMMIT } // Cancel = non persisted element
+enum class ChangeType { CREATE, UPDATE, REMOVE, COMMIT }
 enum class Target { NODE, CONTAINMENT, REFERENCE, BATCH }
 
 // Identity of a node (id, label, persisted or not -> already in Neo4j ?)
