@@ -6,6 +6,10 @@ import org.neo4j.driver.internal.value.IntegerValue
 import org.neo4j.driver.internal.value.ListValue
 import org.neo4j.driver.internal.value.MapValue
 import org.neo4j.driver.internal.value.StringValue
+import geodes.sms.neo4j.io.type.ChangeLog
+import geodes.sms.neo4j.io.type.ChangeType
+import geodes.sms.neo4j.io.type.NodeRef
+import geodes.sms.neo4j.io.type.Target
 import java.util.*
 
 class BufferedRemover(val nodesBatchSize: Int = ManagerBatchSizes.removerNodesBatchSize, val refsBatchSize: Int = 10000) {
@@ -39,44 +43,88 @@ class BufferedRemover(val nodesBatchSize: Int = ManagerBatchSizes.removerNodesBa
 //        refsToRemoveByID.remove(id)
 //    }
 
-    fun commitContainmentsRemove(session: Session, mapFunction: (Sequence<Long>) -> Unit) {
-        val paramsIterator = nodesToRemoveByHost.asSequence().map { MapValue(mapOf(
+    /** One row of the containment-removal query: a deleted node + the edge that was cut to reach it. */
+    private class ContainmentRemoval(val node: RemovedNode, val startID: Long, val startLabel: String)
+
+    /**
+     * A node can come back several times when removal requests overlap (e.g. a class AND one of its attributes).
+     * Keep one entry per node, preferring "deleted in cascade below X" over "deleted explicitly", so the result is deterministic.
+     */
+    private fun distinctNodes(rows: List<RemovedNode>): List<RemovedNode> =
+        rows.groupBy { it.id }.values.map { same ->
+            same.filter { it.rootId != it.id }.minByOrNull { it.rootId } ?: same.first()
+        }
+
+    /** mapFunction receives every node actually deleted: its label, the properties it had just before deletion, and the root of its cascade. */
+    fun commitContainmentsRemove(session: Session, mapFunction: (List<RemovedNode>) -> Unit) {
+        val logProps = ChangeLog.enabled // reading all properties is only worth it when somebody logs them
+        val pending = nodesToRemoveByHost.toList()
+        val paramsIterator = pending.asSequence().map { MapValue(mapOf(
             "startID" to IntegerValue(it.startID),
             "endID" to IntegerValue(it.endID),
             "rType" to StringValue(it.rType)))
         }.iterator()
+        var done = 0
 
         fun commit(batchSize: Int) {
-            session.writeTransaction { tx ->
+            val rows = session.writeTransaction { tx ->
                 val res = tx.run(Query("UNWIND \$batch AS row" +
                         " MATCH (start)-[r{containment:true}]->(end)" +
                         " WHERE ID(start)=row.startID AND ID(end)=row.endID AND type(r)=row.rType" +
-                        " WITH end" +
+                        " WITH start, end" +
                         " MATCH (end)-[*0..{containment:true}]->(d)" +
-                        " WITH d, ID(d) AS removedIDs" +
+                        // everything below is computed BEFORE the delete: afterwards the nodes can no longer be read
+                        " WITH d, ID(d) AS removedIDs, labels(d)[0] AS removedLabels," +
+                        " ID(end) AS rootID, labels(end)[0] AS rootLabel," +
+                        " ID(start) AS startID, labels(start)[0] AS startLabel" +
+                        (if (logProps) ", properties(d) AS removedProps" else "") +
                         " DETACH DELETE d" +
-                        " RETURN removedIDs",
+                        " RETURN removedIDs, removedLabels, rootID, rootLabel, startID, startLabel" +
+                        (if (logProps) ", removedProps" else ""),
                     MapValue(mapOf("batch" to ListValue(*Array(batchSize) { paramsIterator.next() })))
                 ))
-                mapFunction(Sequence { res }.map { it["removedIDs"].asLong() })
+                res.list { ContainmentRemoval(
+                    RemovedNode(
+                        it["removedIDs"].asLong(),
+                        it["removedLabels"].asString(),
+                        if (logProps) it["removedProps"].asMap() else emptyMap<String, Any?>(),
+                        it["rootID"].asLong(),
+                        it["rootLabel"].asString()
+                    ),
+                    it["startID"].asLong(),
+                    it["startLabel"].asString()
+                ) }
             }
+            if (ChangeLog.enabled) {
+                // labels of both ends of every edge really cut (a requested edge that did not exist returns no row, hence no event)
+                val cut = rows.associate { Pair(it.startID, it.node.rootId) to Pair(it.startLabel, it.node.rootLabel) }
+                for (p in pending.subList(done, done + batchSize)) {
+                    val labels = cut[Pair(p.startID, p.endID)] ?: continue
+                    ChangeLog.log(ChangeType.REMOVE, Target.CONTAINMENT,
+                        NodeRef(p.startID, labels.first), NodeRef(p.endID, labels.second), p.rType)
+                }
+            }
+            done += batchSize
+            mapFunction(distinctNodes(rows.map { it.node })) // the removed nodes are logged by the Mapper callback
         }
 
-        for (i in 1..(nodesToRemoveByHost.size / nodesBatchSize)) {
+        for (i in 1..(pending.size / nodesBatchSize)) {
             commit(nodesBatchSize)
         }
-        val rem = nodesToRemoveByHost.size % nodesBatchSize
+        val rem = pending.size % nodesBatchSize
         if (rem > 0) commit(rem)
         nodesToRemoveByHost.clear()
     }
 
     fun commitRelationshipsRemoveByHost(session: Session) {
-        val paramsIterator = refsToRemoveByHostNodes.asSequence().map { MapValue(mapOf(
+        val pending = refsToRemoveByHostNodes.toList()
+        val paramsIterator = pending.asSequence().map { MapValue(mapOf(
             "startID" to IntegerValue(it.startID),
             "endID" to IntegerValue(it.endID),
             "rType" to StringValue(it.rType),
             "limit" to IntegerValue(it.limit)))
         }.iterator()
+        var done = 0
 
         fun commit(batchSize: Int) {
             session.writeTransaction { tx ->
@@ -91,40 +139,61 @@ class BufferedRemover(val nodesBatchSize: Int = ManagerBatchSizes.removerNodesBa
                     MapValue(mapOf("batch" to ListValue(*Array(batchSize) { paramsIterator.next() })))
                 ))
             }
+            if (ChangeLog.enabled) {
+                for (p in pending.subList(done, done + batchSize))
+                    repeat(p.limit.toInt()) { // limit = how many identical relationships were requested
+                        ChangeLog.log(ChangeType.REMOVE, Target.REFERENCE, NodeRef(p.startID), NodeRef(p.endID), p.rType)
+                    }
+            }
+            done += batchSize
         }
 
-        for (i in 1..(refsToRemoveByHostNodes.size / refsBatchSize)) {
+        for (i in 1..(pending.size / refsBatchSize)) {
             commit(refsBatchSize)
         }
-        val rem = refsToRemoveByHostNodes.size % refsBatchSize
+        val rem = pending.size % refsBatchSize
         if (rem > 0) commit(rem)
         refsToRemoveByHostNodes.clear()
     }
 
-    fun commitNodesRemoveByID(session: Session, mapFunction: (Sequence<Long>) -> Unit) {
-        val paramsIterator = nodesToRemoveByID.asSequence().map {
+    /** mapFunction receives every node actually deleted: its label, the properties it had just before deletion, and the root of its cascade. */
+    fun commitNodesRemoveByID(session: Session, mapFunction: (List<RemovedNode>) -> Unit) {
+        val logProps = ChangeLog.enabled
+        val pending = nodesToRemoveByID.toList()
+        val paramsIterator = pending.asSequence().map {
             MapValue(mapOf("id" to IntegerValue(it)))
         }.iterator()
 
         fun commit(batchSize: Int) {
-            session.writeTransaction { tx ->
+            val removed = session.writeTransaction { tx ->
                 val res = tx.run(Query("UNWIND \$batch AS row" +
                         " MATCH (node) WHERE ID(node)=row.id" +
                         " WITH node" +
                         " MATCH (node)-[*0..{containment:true}]->(d)" +
-                        " WITH d, ID(d) AS removedIDs" +
+                        // everything below is computed BEFORE the delete: afterwards the nodes can no longer be read
+                        " WITH d, ID(d) AS removedIDs, labels(d)[0] AS removedLabels," +
+                        " ID(node) AS rootID, labels(node)[0] AS rootLabel" +
+                        (if (logProps) ", properties(d) AS removedProps" else "") +
                         " DETACH DELETE d" +
-                        " RETURN removedIDs",
+                        " RETURN removedIDs, removedLabels, rootID, rootLabel" +
+                        (if (logProps) ", removedProps" else ""),
                     MapValue(mapOf("batch" to ListValue(*Array(batchSize) { paramsIterator.next() })))
                 ))
-                mapFunction(Sequence { res }.map { it["removedIDs"].asLong() })
+                res.list { RemovedNode(
+                    it["removedIDs"].asLong(),
+                    it["removedLabels"].asString(),
+                    if (logProps) it["removedProps"].asMap() else emptyMap<String, Any?>(),
+                    it["rootID"].asLong(),
+                    it["rootLabel"].asString()
+                ) }
             }
+            mapFunction(distinctNodes(removed))
         }
 
-        for (i in 1..(nodesToRemoveByID.size / nodesBatchSize)) {
+        for (i in 1..(pending.size / nodesBatchSize)) {
             commit(nodesBatchSize)
         }
-        val rem = nodesToRemoveByID.size % nodesBatchSize
+        val rem = pending.size % nodesBatchSize
         if (rem > 0) commit(rem)
         nodesToRemoveByID.clear()
     }

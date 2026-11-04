@@ -94,6 +94,7 @@ internal abstract class Neo4jLogTestBase {
      *   UPDATE NODE EAttribute @year {eType: EString -> EInt}
      *   REMOVE CONTAINMENT @pkg -eClassifiers-> @book
      *   REMOVE NODE EClass @book {name=Book}          (les propriétés sont celles d'AVANT la suppression)
+     *   REMOVE NODE EAttribute @title {...} cascade=@book   (supprimé parce qu'il était contenu dans @book)
      */
     protected fun symbolic(e: ChangeEvent): String {
         val names = aliases.entries.associate { it.value._id to it.key }
@@ -109,7 +110,8 @@ internal abstract class Neo4jLogTestBase {
                         .joinToString(", ") { "$it: ${e.oldProps[it]} -> ${e.props[it]}" } + "}"
                     else -> if (e.oldProps.isEmpty()) "" else " {${fmt(e.oldProps)}}"
                 }
-                "${e.type} NODE ${e.node?.label} ${who(e.node)}$detail"
+                val cascade = e.cascade?.let { " cascade=${who(it)}" } ?: "" // supprimé en cascade sous cette racine
+                "${e.type} NODE ${e.node?.label} ${who(e.node)}$detail$cascade"
             }
             else -> "${e.type} ${e.target} ${who(e.node)} -${e.refType}-> ${who(e.other)}"
         }

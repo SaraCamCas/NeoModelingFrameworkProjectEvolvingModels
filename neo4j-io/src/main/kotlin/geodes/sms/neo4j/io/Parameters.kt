@@ -53,3 +53,17 @@ data class NodeResult(
     //val props: MutableMap<String, Any>,
     val outRefCount: HashMap<String, Int> = hashMapOf() //output ref type count
 )
+
+/**
+ * A node deleted from the DB, as reported by the remover.
+ * [props] = what it held just before deletion (empty when the change log is disabled).
+ * [rootId]/[rootLabel] = the node whose deletion was requested; equal to [id] when this node IS that root,
+ * otherwise this node was deleted in cascade (containment subtree) below the root.
+ */
+data class RemovedNode(
+    val id: Long,
+    val label: String,
+    val props: Map<String, Any?>,
+    val rootId: Long,
+    val rootLabel: String
+)

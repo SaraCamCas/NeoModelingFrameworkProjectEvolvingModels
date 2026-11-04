@@ -230,9 +230,9 @@ internal class MetamodelEvolutionLogTest : Neo4jLogTestBase() {
             2,
             "REMOVE CONTAINMENT @pkg -eClassifiers-> @book",
             "REMOVE NODE EClass @book {name=Book}",
-            "REMOVE NODE EAttribute @title {eType=EString, name=title}",
-            "REMOVE NODE EAttribute @year {eType=EString, name=year}",
-            "REMOVE NODE EReference @authors {containment=false, lowerBound=0, name=authors, upperBound=-1}",
+            "REMOVE NODE EAttribute @title {eType=EString, name=title} cascade=@book",
+            "REMOVE NODE EAttribute @year {eType=EString, name=year} cascade=@book",
+            "REMOVE NODE EReference @authors {containment=false, lowerBound=0, name=authors, upperBound=-1} cascade=@book",
             "COMMIT BATCH"
         )
     }
@@ -247,11 +247,55 @@ internal class MetamodelEvolutionLogTest : Neo4jLogTestBase() {
         assertBatch(
             2,
             "REMOVE NODE EClass @book {name=Book}",
-            "REMOVE NODE EAttribute @title {eType=EString, name=title}",
-            "REMOVE NODE EAttribute @year {eType=EString, name=year}",
-            "REMOVE NODE EReference @authors {containment=false, lowerBound=0, name=authors, upperBound=-1}",
+            "REMOVE NODE EAttribute @title {eType=EString, name=title} cascade=@book",
+            "REMOVE NODE EAttribute @year {eType=EString, name=year} cascade=@book",
+            "REMOVE NODE EReference @authors {containment=false, lowerBound=0, name=authors, upperBound=-1} cascade=@book",
             "COMMIT BATCH"
         )
+    }
+
+    // L'événement d'arête porte les labels des deux extrémités : on lit "EPackage -> EClass" sans consulter la base.
+    @Test
+    fun removeContainmentEventCarriesTheLabelsOfBothEnds() {
+        val lib = buildLibrary()
+        lib.pkg.removeChild("eClassifiers", lib.book)
+        graphManager.saveChanges() // lot 2
+
+        val edge = batch(2).of(ChangeType.REMOVE, Target.CONTAINMENT).single()
+        assertEquals("EPackage", edge.node!!.label)
+        assertEquals("EClass", edge.other!!.label)
+        assertEquals(lib.book._id, edge.other!!.id)
+    }
+
+    // La racine de la suppression n'a pas de marqueur ; chaque descendant porte cascade=<racine> avec le label de la racine.
+    @Test
+    fun cascadeMarkerPointsToTheDeletedRoot() {
+        val lib = buildLibrary()
+        lib.pkg.removeChild("eClassifiers", lib.book)
+        graphManager.saveChanges() // lot 2
+
+        val removed = batch(2).of(ChangeType.REMOVE, Target.NODE)
+        val rootEvent = removed.single { it.node!!.id == lib.book._id }
+        assertEquals(null, rootEvent.cascade)
+
+        val descendants = removed.filter { it.node!!.id != lib.book._id }
+        assertEquals(3, descendants.size) // title, year, authors
+        for (event in descendants) {
+            assertEquals(lib.book._id, event.cascade!!.id)
+            assertEquals("EClass", event.cascade!!.label)
+        }
+    }
+
+    // Supprimer une feuille seule (un attribut sans enfant) : c'est elle la racine, donc aucun marqueur de cascade.
+    @Test
+    fun deletedLeafIsItsOwnRootWithoutCascadeMarker() {
+        val lib = buildLibrary()
+        lib.book.removeChild("eAttributes", lib.title)
+        graphManager.saveChanges() // lot 2
+
+        val removed = batch(2).of(ChangeType.REMOVE, Target.NODE).single()
+        assertEquals(lib.title._id, removed.node!!.id)
+        assertEquals(null, removed.cascade)
     }
 
     // LIMITE CONNUE : supprimer une classe supprime aussi, sans le dire, les relations qui y pointent (ici Book -eSuperTypes-> Item).
@@ -318,9 +362,9 @@ internal class MetamodelEvolutionLogTest : Neo4jLogTestBase() {
         assertBatch(
             2,
             "REMOVE NODE EClass @book {name=Book}",
-            "REMOVE NODE EAttribute @title {eType=EString, name=title}",
-            "REMOVE NODE EAttribute @year {eType=EString, name=year}",
-            "REMOVE NODE EReference @authors {containment=false, lowerBound=0, name=authors, upperBound=-1}",
+            "REMOVE NODE EAttribute @title {eType=EString, name=title} cascade=@book",
+            "REMOVE NODE EAttribute @year {eType=EString, name=year} cascade=@book",
+            "REMOVE NODE EReference @authors {containment=false, lowerBound=0, name=authors, upperBound=-1} cascade=@book",
             "COMMIT BATCH"
         )
     }
@@ -439,10 +483,10 @@ internal class MetamodelEvolutionLogTest : Neo4jLogTestBase() {
             "REMOVE CONTAINMENT @pkg -eClassifiers-> @book",
             "REMOVE NODE EClass @author {name=Author}",
             "REMOVE NODE EClass @book {name=Publication}", // le nom d'AVANT suppression, tel qu'il était en base
-            "REMOVE NODE EAttribute @title {eType=EString, name=title}",
-            "REMOVE NODE EAttribute @year {eType=EInt, name=year}", // type modifié au lot 2
-            "REMOVE NODE EAttribute @isbn {eType=EString, name=isbn}",
-            "REMOVE NODE EReference @authors {containment=false, lowerBound=1, name=authors, upperBound=1}",
+            "REMOVE NODE EAttribute @title {eType=EString, name=title} cascade=@book",
+            "REMOVE NODE EAttribute @year {eType=EInt, name=year} cascade=@book", // type modifié au lot 2
+            "REMOVE NODE EAttribute @isbn {eType=EString, name=isbn} cascade=@book",
+            "REMOVE NODE EReference @authors {containment=false, lowerBound=1, name=authors, upperBound=1} cascade=@book",
             "COMMIT BATCH"
         )
 

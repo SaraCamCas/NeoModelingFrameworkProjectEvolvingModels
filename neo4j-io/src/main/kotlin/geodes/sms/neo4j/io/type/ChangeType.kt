@@ -23,6 +23,7 @@ data class ChangeEvent(
     val refType: String? = null, // type de la relation, vide si aucune
     val props: Map<String, Any?> = emptyMap(), // propriétés écrites ou modifiées (nom -> nouvelle valeur), vide si aucune
     val oldProps: Map<String, Any?> = emptyMap(), // valeurs avant le changement : UPDATE = anciennes valeurs des propriétés modifiées (null si absente), REMOVE = propriétés du noeud supprimé
+    val cascade: NodeRef? = null, // REMOVE NODE : racine de la suppression en cascade dont ce noeud est un descendant (null pour la racine elle-même)
 ) {
     fun format(): String {
         val fields = listOfNotNull(
@@ -31,6 +32,7 @@ data class ChangeEvent(
             refType?.let { "ref=$it" },
             props.takeIf { it.isNotEmpty() }?.let { "props=$it" },
             oldProps.takeIf { it.isNotEmpty() }?.let { "old=$it" },
+            cascade?.let { "cascade=$it" },
         ).joinToString(" ")
         return "$seq | b$batch | $time | $type | $target | $fields".trimEnd()
     }
@@ -61,12 +63,13 @@ object ChangeLog {
         other: NodeRef? = null,
         refType: String? = null,
         props: Map<String, Any?> = emptyMap(),
-        oldProps: Map<String, Any?> = emptyMap()
+        oldProps: Map<String, Any?> = emptyMap(),
+        cascade: NodeRef? = null
     ) {
         if (!enabled) return
         seq++
         val time = LocalTime.now().toString().take(12)
-        val event = ChangeEvent(seq, batch, time, type, target, node, other, refType, props.toMap(), oldProps.toMap())
+        val event = ChangeEvent(seq, batch, time, type, target, node, other, refType, props.toMap(), oldProps.toMap(), cascade)
         events.add(event)
         file.parentFile?.mkdirs()
         file.appendText(event.format() + "\n")

@@ -9,6 +9,10 @@ import org.neo4j.driver.internal.value.IntegerValue
 import org.neo4j.driver.internal.value.ListValue
 import org.neo4j.driver.internal.value.MapValue
 import org.neo4j.driver.internal.value.StringValue
+import geodes.sms.neo4j.io.type.ChangeLog
+import geodes.sms.neo4j.io.type.ChangeType
+import geodes.sms.neo4j.io.type.NodeRef
+import geodes.sms.neo4j.io.type.Target
 
 class BufferedCreator(val nodesBatchSize: Int = ManagerBatchSizes.creatorNodesBatchSize, val refsBatchSize: Int = 10000) {
     private val nodesToCreate = hashMapOf<Long, NodeParameter>()
@@ -49,7 +53,7 @@ class BufferedCreator(val nodesBatchSize: Int = ManagerBatchSizes.creatorNodesBa
         }.chunked(nodesBatchSize)
 
         for (chunk in chunkedSequence) {
-            session.writeTransaction { tx ->
+            val created = session.writeTransaction { tx ->
                 val params = MapValue(mapOf("batch" to ListValue(*chunk.toTypedArray())))
                 val res = tx.run(Query("UNWIND \$batch AS row" +
                         " CALL apoc.create.node([row.label], row.props) YIELD node" +
@@ -57,8 +61,17 @@ class BufferedCreator(val nodesBatchSize: Int = ManagerBatchSizes.creatorNodesBa
                         params
                     )
                 )
-                mapFunction(Sequence { res }.map { it["alias"].asLong() to it["id"].asLong() })
+                res.list { it["alias"].asLong() to it["id"].asLong() }
             }
+            // log BEFORE mapFunction: onCreate() clears the props map shared with nodesToCreate
+            if (ChangeLog.enabled) {
+                for ((alias, id) in created) {
+                    val p = nodesToCreate[alias] ?: continue
+                    ChangeLog.log(ChangeType.CREATE, Target.NODE, NodeRef(id, p.label),
+                        props = p.props.mapValues { it.value.asObject() })
+                }
+            }
+            mapFunction(created.asSequence())
         }
 
         nodesToCreate.clear()
@@ -99,13 +112,15 @@ class BufferedCreator(val nodesBatchSize: Int = ManagerBatchSizes.creatorNodesBa
     }
 
     fun commitRelationshipsNoIDs(session: Session) {
-        val paramsIterator = refsToCreate.asSequence().map { (_, v) -> MapValue(mapOf(
+        val pending = refsToCreate.values.toList() // one fixed order feeds both the query and the log
+        val paramsIterator = pending.asSequence().map { v -> MapValue(mapOf(
             //"alias" to IntegerValue(v.alias),
             "from" to IntegerValue(v.startNode._id),
             "type" to StringValue(v.type),
             "props" to MapValue(v.props),
             "to" to IntegerValue(v.endNode._id)))
         }.iterator()
+        var done = 0
 
         fun commit(batchSize: Int) {
             session.writeTransaction { tx ->
@@ -127,10 +142,19 @@ class BufferedCreator(val nodesBatchSize: Int = ManagerBatchSizes.creatorNodesBa
 //                    MapValue(mapOf("batch" to ListValue(*Array(batchSize) { paramsIterator.next() })))
 //                ))
             }
+            // nodes are already committed (real ids): startNode._id / endNode._id are DB ids here
+            if (ChangeLog.enabled) {
+                for (v in pending.subList(done, done + batchSize)) {
+                    val target = if (v.props["containment"]?.asBoolean() == true) Target.CONTAINMENT else Target.REFERENCE
+                    ChangeLog.log(ChangeType.CREATE, target,
+                        NodeRef(v.startNode._id, v.startNode.label), NodeRef(v.endNode._id, v.endNode.label), v.type)
+                }
+            }
+            done += batchSize
         }
 
-        val rem = refsToCreate.size % refsBatchSize
-        for (i in 1..(refsToCreate.size / refsBatchSize)) {
+        val rem = pending.size % refsBatchSize
+        for (i in 1..(pending.size / refsBatchSize)) {
             commit(refsBatchSize)
         }
         if (rem > 0) commit(rem)

@@ -6,6 +6,10 @@ import geodes.sms.neo4j.io.controllers.NodeController
 import geodes.sms.neo4j.io.entity.INodeEntity
 import geodes.sms.neo4j.io.entity.RelationshipEntity
 import geodes.sms.neo4j.io.type.AsObject
+import geodes.sms.neo4j.io.type.ChangeLog
+import geodes.sms.neo4j.io.type.ChangeType
+import geodes.sms.neo4j.io.type.NodeRef
+import geodes.sms.neo4j.io.type.Target
 import org.neo4j.driver.Session
 import org.neo4j.driver.Value
 import org.neo4j.driver.Values
@@ -287,22 +291,12 @@ internal class Mapper(
     // -------------------- UNLOAD section end ---------------- //
 
     fun saveChanges(session: Session) {
-        remover.commitContainmentsRemove(session) { ids ->
-            for (id in ids) {
-                val node = trackedNodes.remove(id)
-                if (node != null) {
-                    node.onRemove()
-//                    if (node.getState() == EntityState.MODIFIED) {
-//                        updater.popNodeUpdate(node._id)
-//                        nodesToUpdate.remove(node._id)
-//                    }
-                }
-            }
+        val loggedRemovals = hashSetOf<Long>() // overlapping cascades can return the same node twice
+        remover.commitContainmentsRemove(session) { removed ->
+            for (node in removed) onNodeRemoved(node, loggedRemovals)
         }
-        remover.commitNodesRemoveByID(session) { ids ->
-            for (id in ids) {
-                trackedNodes.remove(id)?.onRemove()
-            }
+        remover.commitNodesRemoveByID(session) { removed ->
+            for (node in removed) onNodeRemoved(node, loggedRemovals)
         }
         remover.commitRelationshipsRemoveByHost(session)
         updater.commitNodesUpdate(session)
@@ -322,6 +316,22 @@ internal class Mapper(
         }
         creator.commitRelationshipsNoIDs(session)
         adjOutput.clear()
+        ChangeLog.log(ChangeType.COMMIT, Target.BATCH) // marks the end of the batch
+        ChangeLog.endBatch()
+    }
+
+    /** Called once per node actually deleted in the DB: cache cleanup + change log. */
+    private fun onNodeRemoved(removed: RemovedNode, logged: MutableSet<Long>) {
+        val id = removed.id
+        updater.popNodeUpdate(id) // a removed node must not be updated...
+        nodesToUpdate.remove(id)  // ...nor see its state reset to PERSISTED by onUpdate()
+        trackedNodes.remove(id)?.onRemove()
+        if (logged.add(id)) {
+            // oldProps = what the node held just before deletion (e.g. the name of a removed EClass)
+            // cascade = the node whose deletion was requested, when this one only went away because it was contained in it
+            val cascade = if (removed.rootId != id) NodeRef(removed.rootId, removed.rootLabel) else null
+            ChangeLog.log(ChangeType.REMOVE, Target.NODE, NodeRef(id, removed.label), oldProps = removed.props, cascade = cascade)
+        }
     }
 
     fun clearCache() {
