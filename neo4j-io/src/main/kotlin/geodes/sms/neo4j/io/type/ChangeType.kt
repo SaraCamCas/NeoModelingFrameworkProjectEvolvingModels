@@ -21,7 +21,8 @@ data class ChangeEvent(
     val node: NodeRef? = null, // noeud concerné ou origine de la relation
     val other: NodeRef? = null, // second noeud pour une relation
     val refType: String? = null, // type de la relation, vide si aucune
-    val props: Map<String, Any?> = emptyMap(), // propriétés écrites ou modifiées (nom -> valeur), vide si aucune
+    val props: Map<String, Any?> = emptyMap(), // propriétés écrites ou modifiées (nom -> nouvelle valeur), vide si aucune
+    val oldProps: Map<String, Any?> = emptyMap(), // valeurs avant le changement : UPDATE = anciennes valeurs des propriétés modifiées (null si absente), REMOVE = propriétés du noeud supprimé
 ) {
     fun format(): String {
         val fields = listOfNotNull(
@@ -29,13 +30,14 @@ data class ChangeEvent(
             other?.let { "other=$it" },
             refType?.let { "ref=$it" },
             props.takeIf { it.isNotEmpty() }?.let { "props=$it" },
+            oldProps.takeIf { it.isNotEmpty() }?.let { "old=$it" },
         ).joinToString(" ")
         return "$seq | b$batch | $time | $type | $target | $fields".trimEnd()
     }
 }
 
 object ChangeLog {
-    var enabled = true
+    var enabled = false // opt-in: the framework (loaders, evaluations) must not write a log unless asked
     private var file = File("../log/change-log.txt")
     private var seq = 0
     private var batch = 1
@@ -59,11 +61,12 @@ object ChangeLog {
         other: NodeRef? = null,
         refType: String? = null,
         props: Map<String, Any?> = emptyMap(),
+        oldProps: Map<String, Any?> = emptyMap()
     ) {
         if (!enabled) return
         seq++
         val time = LocalTime.now().toString().take(12)
-        val event = ChangeEvent(seq, batch, time, type, target, node, other, refType, props.toMap())
+        val event = ChangeEvent(seq, batch, time, type, target, node, other, refType, props.toMap(), oldProps.toMap())
         events.add(event)
         file.parentFile?.mkdirs()
         file.appendText(event.format() + "\n")
