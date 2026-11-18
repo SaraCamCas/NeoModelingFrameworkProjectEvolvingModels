@@ -8,4 +8,12 @@ dependencies {
     implementation 'org.eclipse.emf:org.eclipse.emf.ecore.xmi:2.16.0'
     implementation 'org.eclipse.emf:org.eclipse.emf.ecore:2.23.0'
     implementation project(':neo4j-io')
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.7.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.7.0'
+    implementation project(':config')
+    testImplementation "org.jetbrains.kotlin:kotlin-test:1.5.21"
+}
+
+test {
+    useJUnitPlatform()
 }

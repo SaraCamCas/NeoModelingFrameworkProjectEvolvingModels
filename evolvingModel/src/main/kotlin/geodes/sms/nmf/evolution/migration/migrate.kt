@@ -1,9 +1,11 @@
 package geodes.sms.nmf.evolution.migration
 
 import geodes.sms.nmf.evolution.dsl.AddAttribute
+import geodes.sms.nmf.evolution.dsl.AddClass
 import geodes.sms.nmf.evolution.dsl.MetamodelChange
 import geodes.sms.neo4j.io.controllers.IGraphManager
 import geodes.sms.nmf.evolution.dsl.RenameAttribute
+import geodes.sms.nmf.evolution.dsl.RenameClass
 import geodes.sms.neo4j.io.type.AsObject
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -18,6 +20,8 @@ fun migrate(
     when (change) {
         is AddAttribute -> addAttribute(change, db, defaultValue, subclasses)
         is RenameAttribute -> renameAttribute(change, db, subclasses)
+        is RenameClass -> renameClass(change, db)
+        is AddClass-> addClass(change,db, defaultValue)
         else -> throw IllegalArgumentException("Pas de migration pour ${change::class.simpleName}")
     }
 }
@@ -62,5 +66,16 @@ private fun renameAttribute(change: RenameAttribute, db: IGraphManager, subclass
             node.removeProperty(change.from)
         }
     }
+    db.saveChanges()
+}
+
+/** Ajoute nouvelle classe [AddClass.name]. */
+private fun addClass(change: AddClass, db: IGraphManager, defaultValue: String) {
+    db.createNode(change.name)
+    db.saveChanges()
+}
+
+private fun renameClass(change: RenameClass, db: IGraphManager) {
+    db.renameLabel(change.from, change.to)
     db.saveChanges()
 }

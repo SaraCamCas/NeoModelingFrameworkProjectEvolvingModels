@@ -22,6 +22,18 @@ internal class GraphManager(dbUri: String, username: String, password: String) :
     }
 
     //fun clearChanges() {}
+    override fun renameLabel(from: String, to: String) {
+        saveChanges()
+        val session = driver.session()
+        session.writeTransaction { tx ->
+            tx.run(Query("MATCH (n:`$from`)" +
+                    " REMOVE n:`$from`" +
+                    " SET n:`$to`"
+            ))
+        }
+        session.close()
+        clearCache()
+    }
 
     override fun clearCache() = mapper.clearCache()
 
